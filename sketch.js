@@ -1,6 +1,9 @@
 /*
-  VS Code Local Version - PC Stable Edition (Pre-Mobile)
-  CN: 电脑端稳定版，包含所有视觉修复和UI优化，无手机端强制适配逻辑
+  VS Code Local Version - Logic Separation Edition
+  修复：
+  1. 彻底分离“纯色模式”和“视频模式”的渲染逻辑
+  2. 纯色模式下不再绘制 maskLayer，减少干扰
+  3. 再次强化 noStroke，确保代码层绝无黑线
 */
 
 // ================= 1. 路径配置 =================
@@ -50,8 +53,9 @@ let mainCanvas;
 let maskLayer;
 let displaySize = 800;
 const DESIGN_SIZE = 1000;
+let isMobile = false;
+let mainContainer;
 
-// === 背景控制 ===
 let bgIndex = 0;
 const bgOptions = [
   "Original",
@@ -63,7 +67,6 @@ const bgOptions = [
   "Pure Black",
 ];
 
-// 面部轮廓索引
 const silhouetteIndices = [
   10, 338, 297, 332, 284, 251, 389, 356, 454, 323, 361, 288, 397, 365, 379, 378,
   400, 377, 152, 148, 176, 149, 150, 136, 172, 58, 132, 93, 234, 127, 162, 21,
@@ -86,17 +89,37 @@ function loadGroup(prefix, targetArray) {
 }
 
 function setup() {
-  displaySize = min(windowWidth, windowHeight * 0.8);
-  mainCanvas = createCanvas(displaySize, displaySize);
+  isMobile =
+    /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
+      navigator.userAgent
+    );
+  if (windowWidth < 900) isMobile = true;
 
-  // 移除画布本身的 CSS 边框
+  mainContainer = createDiv();
+  mainContainer.id("main-container");
+  mainContainer.style("display", "flex");
+  mainContainer.style("justify-content", "center");
+  mainContainer.style("align-items", "center");
+  mainContainer.style("min-height", "100vh");
+  mainContainer.style("gap", "40px");
+
+  if (isMobile) {
+    mainContainer.style("flex-direction", "column");
+    mainContainer.style("padding", "20px 0");
+    displaySize = windowWidth * 0.95;
+  } else {
+    mainContainer.style("flex-direction", "row");
+    displaySize = min(windowWidth * 0.5, windowHeight * 0.8);
+  }
+
+  mainCanvas = createCanvas(displaySize, displaySize);
+  mainCanvas.parent(mainContainer);
   mainCanvas.style("outline", "none");
   mainCanvas.style("box-shadow", "none");
-  mainCanvas.style("display", "block");
-  mainCanvas.style("margin", "0 auto");
+  mainCanvas.style("border", "none");
 
   maskLayer = createGraphics(displaySize, displaySize);
-  maskLayer.noStroke(); // 初始化遮罩层无描边
+  maskLayer.noStroke();
 
   noLoop();
   imageMode(CENTER);
@@ -104,13 +127,18 @@ function setup() {
 
   createEditorUI();
 
-  // 【PC端标准写法】自动镜像翻转，兼容性最好
-  video = createCapture(VIDEO, { flipped: true });
-  video.size(640, 480);
+  let constraints;
+  if (isMobile) {
+    constraints = { video: { facingMode: "user" }, audio: false };
+  } else {
+    constraints = VIDEO;
+  }
+
+  video = createCapture(constraints);
   video.hide();
 
   console.log("Starting FaceMesh...");
-  let options = { maxFaces: 5, refineLandmarks: true, flipHorizontal: true };
+  let options = { maxFaces: 5, refineLandmarks: true, flipHorizontal: false };
 
   faceMesh = ml5.faceMesh(options, () => {
     console.log("✅ Model Loaded!");
@@ -121,9 +149,7 @@ function setup() {
 }
 
 function draw() {
-  // 全局强制关闭描边
   noStroke();
-
   if (mode === "EDITOR") {
     drawEditor();
   } else if (mode === "WEBCAM") {
@@ -137,6 +163,7 @@ function drawEditor() {
   background(255);
 
   push();
+  noStroke();
   translate(width / 2, height / 2);
   let s = width / DESIGN_SIZE;
   scale(s);
@@ -156,92 +183,134 @@ function drawStaticPart(imgArray, index) {
   }
 }
 
-// ---------------- 模式 2: AR (PC稳定版) ----------------
+// ---------------- 模式 2: AR (逻辑分离版) ----------------
 function drawWebcam() {
-  background(0);
+  // 全局清理
   noStroke();
 
-  let vW = video.width;
-  let vH = video.height;
-  if (vW === 0 || vH === 0) return;
+  if (!video || video.width === 0 || video.height === 0) return;
 
-  let scaleFactor = max(width / vW, height / vH);
-  let finalW = vW * scaleFactor;
-  let finalH = vH * scaleFactor;
+  let scaleW = width / video.width;
+  let scaleH = height / video.height;
+  let scaleFactor = max(scaleW, scaleH);
+  let finalW = video.width * scaleFactor;
+  let finalH = video.height * scaleFactor;
 
-  // 1. 始终绘制底层视频
-  image(video, width / 2, height / 2, finalW, finalH);
+  // =================================================
+  // A. 纯色背景模式 (4,5,6) - 逻辑最简单，确保无干扰
+  // =================================================
+  if (bgIndex >= 4) {
+    // 1. 直接画纯色背景
+    if (bgIndex === 4) background(255); // White
+    if (bgIndex === 5) background(128); // Grey
+    if (bgIndex === 6) background(0); // Black
 
-  // 2. 绘制遮罩层 (Real+Color / Pure Color)
-  if (bgIndex > 0) {
-    maskLayer.clear();
-    maskLayer.noStroke();
-
-    // 设置背景色
-    let bgColor;
-    if (bgIndex === 1 || bgIndex === 4) bgColor = color(255); // White
-    else if (bgIndex === 2 || bgIndex === 5) bgColor = color(128); // Grey
-    else if (bgIndex === 3 || bgIndex === 6) bgColor = color(0); // Black
-
-    // 使用 rect 填充背景
-    maskLayer.fill(bgColor);
-    maskLayer.rect(0, 0, width, height);
-
-    // Real+Color 模式：挖洞 (保留真人脸)
-    if (bgIndex >= 1 && bgIndex <= 3 && faces.length > 0) {
-      maskLayer.erase();
-      for (let i = 0; i < faces.length; i++) {
-        let face = faces[i];
-        let kp = face.keypoints;
-        let ox = (width - finalW) / 2;
-        let oy = (height - finalH) / 2;
-
-        maskLayer.beginShape();
-        for (let idx of silhouetteIndices) {
-          let p = kp[idx];
-          let x = p.x * scaleFactor + ox;
-          let y = p.y * scaleFactor + oy;
-          maskLayer.vertex(x, y);
-        }
-        maskLayer.endShape(CLOSE);
-      }
-      maskLayer.noErase();
-    }
-
-    // 将遮罩层盖在视频上
-    image(maskLayer, width / 2, height / 2, width, height);
+    // 2. 这里的“防卡死” trick：
+    // 我们必须画视频，但我们可以把它画到屏幕外面去！
+    // 这样浏览器知道视频在用，但用户完全看不到它（也就不会有黑线干扰）
+    push();
+    image(video, -9999, -9999, 1, 1);
+    pop();
   }
 
-  // 3. AI 侦测
+  // =================================================
+  // B. 混合模式 (0,1,2,3) - 需要处理视频和遮罩
+  // =================================================
+  else {
+    // 1. 先画背景色（兜底）
+    background(0);
+
+    // 2. 准备绘制变换
+    push();
+    translate(width / 2, height / 2);
+    scale(-1, 1);
+
+    // 3. 画视频
+    image(video, 0, 0, finalW, finalH);
+
+    pop(); // 结束视频变换
+
+    // 4. 画遮罩 (Real+Color)
+    if (bgIndex >= 1 && bgIndex <= 3) {
+      maskLayer.clear();
+      maskLayer.noStroke();
+      maskLayer.drawingContext.shadowBlur = 0;
+
+      let bgColor;
+      if (bgIndex === 1) bgColor = color(255);
+      else if (bgIndex === 2) bgColor = color(128);
+      else if (bgIndex === 3) bgColor = color(0);
+
+      maskLayer.fill(bgColor);
+      maskLayer.rect(0, 0, width, height);
+
+      if (faces.length > 0) {
+        maskLayer.erase();
+        maskLayer.noStroke();
+        for (let i = 0; i < faces.length; i++) {
+          let face = faces[i];
+          let kp = face.keypoints;
+          let ox = (width - finalW) / 2;
+          let oy = (height - finalH) / 2;
+
+          maskLayer.beginShape();
+          for (let idx of silhouetteIndices) {
+            let p = kp[idx];
+            // 镜像修正
+            let mirroredX = video.width - p.x;
+            let x = mirroredX * scaleFactor + ox;
+            let y = p.y * scaleFactor + oy;
+            maskLayer.vertex(x, y);
+          }
+          maskLayer.endShape(CLOSE);
+        }
+        maskLayer.noErase();
+      }
+      image(maskLayer, width / 2, height / 2, width, height); // maskLayer已经中心对齐了
+    }
+  }
+
+  // =================================================
+  // C. 绘制面具 (所有模式通用)
+  // =================================================
+
+  // AI 侦测
   if (faceMesh && faces.length === 0 && frameCount % 30 === 0) {
     faceMesh.detectStart(video, (results) => {
       faces = results;
     });
   }
 
-  // AI Loading 提示
   if (!modelLoaded) {
     fill(bgIndex === 1 || bgIndex === 4 ? 0 : 255);
     noStroke();
-    textSize(30);
+    textSize(width * 0.05);
     textAlign(CENTER);
     text("AI Loading...", width / 2, height / 2);
     return;
   }
 
-  // 4. 绘制 AR 面具 (顶层)
+  // 变换坐标系准备画图
+  push();
+  translate(width / 2, height / 2);
+  scale(-1, 1);
+
   for (let i = 0; i < faces.length; i++) {
-    drawFaceMask(faces[i], scaleFactor, finalW, finalH);
+    // 强制无描边
+    noStroke();
+    noFill();
+    drawFaceMask(faces[i], scaleFactor, video.width, video.height);
   }
+  pop();
 }
 
 // AR 算法
 function drawFaceMask(face, s, vW, vH) {
   let kp = face.keypoints;
-  let ox = (width - vW) / 2;
-  let oy = (height - vH) / 2;
+  let ox = -vW / 2;
+  let oy = -vH / 2;
   function getP(index) {
-    return createVector(kp[index].x * s + ox, kp[index].y * s + oy);
+    return createVector((kp[index].x + ox) * s, (kp[index].y + oy) * s);
   }
 
   let noseTip = getP(4);
@@ -255,11 +324,12 @@ function drawFaceMask(face, s, vW, vH) {
   let maskScale = (faceWidth * 2.2) / DESIGN_SIZE;
 
   push();
-  translate(noseTip.x, noseTip.y);
-  rotate(angle * -1); // 镜像修正
-  scale(maskScale);
+  noStroke(); // 再次确认
+  noFill(); // 确保不填充任何东西
 
-  noStroke();
+  translate(noseTip.x, noseTip.y);
+  rotate(angle);
+  scale(maskScale);
 
   drawLayer(assets.ear, currentIndices.ear);
   drawLayer(assets.beard, currentIndices.beard);
@@ -269,13 +339,11 @@ function drawFaceMask(face, s, vW, vH) {
   }
   drawLayer(assets.ornaments, currentIndices.ornaments);
 
-  // 动态嘴巴
   let topLip = getP(13);
   let botLip = getP(14);
   let mouthOpenDist = p5.Vector.dist(topLip, botLip);
   let relativeOpen = mouthOpenDist / maskScale;
   let mouthStretch = map(relativeOpen, 0, 100, 0.8, 2.5, true);
-
   if (assets.mouth[currentIndices.mouth]) {
     image(
       assets.mouth[currentIndices.mouth],
@@ -286,13 +354,11 @@ function drawFaceMask(face, s, vW, vH) {
     );
   }
 
-  // 动态眼睛
   let leftEyeTop = getP(159);
   let leftEyeBot = getP(145);
   let eyeOpenDist = p5.Vector.dist(leftEyeTop, leftEyeBot);
   let relativeEyeOpen = eyeOpenDist / maskScale;
   let eyeSquash = map(relativeEyeOpen, 0, 20, 0.1, 1.0, true);
-
   if (assets.eyes[currentIndices.eyes]) {
     image(
       assets.eyes[currentIndices.eyes],
@@ -302,7 +368,6 @@ function drawFaceMask(face, s, vW, vH) {
       DESIGN_SIZE * eyeSquash
     );
   }
-
   pop();
 }
 
@@ -317,36 +382,55 @@ let controlPanel, btnStartAR, btnBack, btnSnap, bgControlDiv, bgLabel, statusP;
 
 function createEditorUI() {
   if (controlPanel) controlPanel.remove();
-  controlPanel = createDiv();
-  controlPanel.style(
-    `width:${displaySize}px; margin:20px auto; text-align:center; padding-bottom: 20px;`
-  );
 
-  btnStartAR = createButton("📸 Start AR Camera");
+  controlPanel = createDiv();
+  controlPanel.parent(mainContainer);
+
+  if (isMobile) {
+    controlPanel.style("width", "95%");
+    controlPanel.style("text-align", "center");
+  } else {
+    controlPanel.style("width", "350px");
+    controlPanel.style("height", displaySize + "px");
+    controlPanel.style("overflow-y", "auto");
+    controlPanel.style("text-align", "left");
+    controlPanel.style("padding", "20px");
+    controlPanel.style("background", "white");
+    controlPanel.style("border-radius", "20px");
+    controlPanel.style("box-shadow", "0 10px 30px rgba(0,0,0,0.05)");
+  }
+
+  let btnContainer = createDiv();
+  btnContainer.parent(controlPanel);
+  btnContainer.style("display", "flex");
+  btnContainer.style("flex-wrap", "wrap");
+  btnContainer.style("justify-content", isMobile ? "center" : "flex-start");
+  btnContainer.style("gap", "10px");
+  btnContainer.style("margin-bottom", "20px");
+
+  btnStartAR = createButton("📸 Start Camera");
   styleMainButton(btnStartAR, "#2196F3");
-  btnStartAR.parent(controlPanel);
+  btnStartAR.parent(btnContainer);
   btnStartAR.mousePressed(startWebcamMode);
 
-  let btnRand = createButton("🎲 Randomize");
+  let btnRand = createButton("🎲 Random");
   styleMainButton(btnRand, "#FF9800");
-  btnRand.parent(controlPanel);
-  btnRand.style("margin-left", "10px");
+  btnRand.parent(btnContainer);
   btnRand.mousePressed(() => {
     randomizeFace();
     redraw();
   });
 
-  let btnSave = createButton("💾 Save Design");
+  let btnSave = createButton("💾 Save");
   styleMainButton(btnSave, "#4CAF50");
-  btnSave.parent(controlPanel);
-  btnSave.style("margin-left", "10px");
+  btnSave.parent(btnContainer);
   btnSave.mousePressed(() => {
     saveCanvas("my_face_design", "png");
   });
 
   let listDiv = createDiv();
   listDiv.parent(controlPanel);
-  listDiv.style("margin-top", "20px");
+
   for (let part of partsList) createPartRow(part, listDiv);
 
   statusP = createP("🔴 AI Loading...");
@@ -355,16 +439,16 @@ function createEditorUI() {
   statusP.style("font-size", "16px");
   statusP.style("font-weight", "bold");
   statusP.style("color", "red");
-  statusP.style("margin-top", "15px");
+  if (!isMobile) statusP.style("text-align", "center");
 }
 
 function updateStatusText() {
   if (statusP) {
     if (modelLoaded) {
-      statusP.html("🟢 AI Ready! Click 'Start AR Camera'");
+      statusP.html("🟢 AI Ready!");
       statusP.style("color", "#009900");
     } else {
-      statusP.html("🔴 AI Loading... Please Wait...");
+      statusP.html("🔴 AI Loading...");
       statusP.style("color", "red");
     }
   }
@@ -377,43 +461,82 @@ function startWebcamMode() {
   }
 
   mode = "WEBCAM";
-  resizeCanvas(640, 480);
-  controlPanel.hide();
 
-  maskLayer = createGraphics(640, 480);
+  let w, h;
+  if (isMobile) {
+    w = windowWidth;
+    h = windowHeight;
+    resizeCanvas(w, h);
+
+    mainCanvas.style("position", "fixed");
+    mainCanvas.style("top", "0");
+    mainCanvas.style("left", "0");
+    mainCanvas.style("z-index", "900");
+    mainCanvas.style("margin", "0");
+    mainCanvas.style("width", "100%");
+    mainCanvas.style("height", "100%");
+
+    maskLayer = createGraphics(w, h);
+  } else {
+    w = 640;
+    h = 480;
+    resizeCanvas(w, h);
+    mainCanvas.style("position", "fixed");
+    mainCanvas.style("top", "50%");
+    mainCanvas.style("left", "50%");
+    mainCanvas.style("transform", "translate(-50%, -50%)");
+    mainCanvas.style("z-index", "900");
+    mainCanvas.style("width", "640px");
+    mainCanvas.style("height", "480px");
+
+    maskLayer = createGraphics(w, h);
+  }
+
   maskLayer.noStroke();
+  maskLayer.strokeWeight(0);
+  controlPanel.hide();
 
   faceMesh.detectStart(video, (results) => {
     faces = results;
   });
 
   if (!btnBack) {
+    let topBtns = createDiv();
+    topBtns.id("topBtns");
+    topBtns.style("position", "fixed");
+    topBtns.style("top", "20px");
+    topBtns.style("left", "20px");
+    topBtns.style("z-index", "1001");
+    topBtns.style("display", "flex");
+    topBtns.style("gap", "10px");
+
     btnBack = createButton("⬅ Back");
-    btnBack.position(20, 20);
     styleMainButton(btnBack, "#f44336");
+    btnBack.parent(topBtns);
     btnBack.mousePressed(stopWebcamMode);
 
     btnSnap = createButton("📸 Snap");
-    btnSnap.position(120, 20);
     styleMainButton(btnSnap, "#E91E63");
+    btnSnap.parent(topBtns);
     btnSnap.mousePressed(() => {
       saveCanvas("ar_shot", "png");
     });
 
     bgControlDiv = createDiv();
+    bgControlDiv.id("bgCtrl");
     bgControlDiv.style("position", "fixed");
-    bgControlDiv.style("bottom", "30px");
+    bgControlDiv.style("bottom", "20px");
     bgControlDiv.style("left", "50%");
     bgControlDiv.style("transform", "translateX(-50%)");
-
     bgControlDiv.style("background", "white");
-    bgControlDiv.style("padding", "10px 20px");
+    bgControlDiv.style("padding", "10px 15px");
     bgControlDiv.style("border-radius", "50px");
     bgControlDiv.style("box-shadow", "0 4px 15px rgba(0,0,0,0.3)");
     bgControlDiv.style("display", "flex");
     bgControlDiv.style("align-items", "center");
-    bgControlDiv.style("gap", "15px");
-    bgControlDiv.style("z-index", "9999");
+    bgControlDiv.style("gap", "10px");
+    bgControlDiv.style("z-index", "1000");
+    bgControlDiv.style("width", "max-content");
 
     let btnBgPrev = createButton("◀");
     styleArrowBtn(btnBgPrev);
@@ -424,8 +547,8 @@ function startWebcamMode() {
     bgLabel.parent(bgControlDiv);
     bgLabel.style("font-family", "sans-serif");
     bgLabel.style("font-weight", "bold");
-    bgLabel.style("font-size", "16px");
-    bgLabel.style("min-width", "140px");
+    bgLabel.style("font-size", "14px");
+    bgLabel.style("min-width", "120px");
     bgLabel.style("text-align", "center");
 
     let btnBgNext = createButton("▶");
@@ -433,28 +556,15 @@ function startWebcamMode() {
     btnBgNext.parent(bgControlDiv);
     btnBgNext.mousePressed(() => changeBg(1));
   } else {
-    btnBack.show();
-    btnSnap.show();
-    bgControlDiv.show();
+    select("#topBtns").show();
+    select("#bgCtrl").show();
   }
   loop();
 }
 
 function stopWebcamMode() {
   mode = "EDITOR";
-  resizeCanvas(displaySize, displaySize);
-  maskLayer = createGraphics(displaySize, displaySize);
-  maskLayer.noStroke();
-
-  faceMesh.detectStop();
-  faces = [];
-  noLoop();
-
-  controlPanel.show();
-  btnBack.hide();
-  btnSnap.hide();
-  bgControlDiv.hide();
-  redraw();
+  location.reload();
 }
 
 function changeBg(dir) {
@@ -466,18 +576,24 @@ function createPartRow(part, parent) {
   let row = createDiv();
   row.parent(parent);
   row.style(
-    "display:flex; justify-content:space-between; background:white; margin-bottom:5px; padding:5px; border-radius:5px; border:1px solid #ccc"
+    "display:flex; justify-content:space-between; align-items:center; background:#f9f9f9; margin-bottom:8px; padding:8px; border-radius:8px; border:1px solid #eee;"
   );
+
   let btnPrev = createButton("◀");
   btnPrev.mousePressed(() => changeIndex(part.key, -1));
   btnPrev.parent(row);
+  styleArrowBtn(btnPrev);
+
   let label = createSpan(part.label);
-  label.style("font-weight:bold; line-height:25px;");
+  label.style("font-weight:bold; font-size: 16px;");
   label.parent(row);
+
   let btnNext = createButton("▶");
   btnNext.mousePressed(() => changeIndex(part.key, 1));
   btnNext.parent(row);
+  styleArrowBtn(btnNext);
 }
+
 function changeIndex(key, dir) {
   let len = assets[key].length;
   currentIndices[key] = (currentIndices[key] + dir + len) % len;
@@ -487,20 +603,26 @@ function randomizeFace() {
   for (let part of partsList)
     currentIndices[part.key] = floor(random(assets[part.key].length));
 }
+
 function styleMainButton(btn, color) {
   btn.style(
-    `background:${color}; color:white; border:none; padding:10px 20px; border-radius:5px; cursor:pointer; font-size:16px;`
+    `background:${color}; color:white; border:none; padding:12px 16px; border-radius:8px; cursor:pointer; font-size:14px; font-weight:bold; box-shadow: 0 2px 5px rgba(0,0,0,0.2); touch-action: manipulation;`
   );
 }
 function styleArrowBtn(btn) {
   btn.style(
-    "background:#f0f0f0; border:1px solid #ccc; border-radius:4px; width:40px; height:40px; cursor:pointer; font-size: 18px;"
+    "background:#f8f9fa; border:1px solid #ddd; border-radius:6px; width:44px; height:44px; cursor:pointer; font-size: 18px; display:flex; align-items:center; justify-content:center; touch-action: manipulation;"
   );
 }
+
 function windowResized() {
-  if (mode === "EDITOR") {
-    displaySize = min(windowWidth, windowHeight * 0.8);
-    resizeCanvas(displaySize, displaySize);
-    redraw();
+  if (isMobile) {
+    location.reload();
+  } else {
+    if (mode === "EDITOR") {
+      let size = min(windowWidth * 0.95, windowHeight * 0.75);
+      resizeCanvas(size, size);
+      redraw();
+    }
   }
 }

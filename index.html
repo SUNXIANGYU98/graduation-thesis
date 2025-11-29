@@ -2,48 +2,47 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8">
-    
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    
     <title>Face AR Magic</title>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.4/p5.min.js"></script>
-    
     <script src="https://cdnjs.cloudflare.com/ajax/libs/tensorflow/4.17.0/tf.min.js"></script>
-    
     <script src="https://unpkg.com/ml5@1.0.1/dist/ml5.min.js"></script>
 
     <style>
-      /* 全局重置 */
       html, body {
         margin: 0;
         padding: 0;
         width: 100%;
         height: 100%;
-        background-color: #EEEEEE; /* 背景色 */
+        background-color: #EEEEEE;
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-        
-        /* 【关键】防止手机端下拉刷新网页，保证 App 体验 */
         overscroll-behavior: none;
-        overflow: hidden; /* 防止出现滚动条 */
+        overflow: hidden;
       }
 
-      /* 画布样式优化 */
       canvas {
         display: block;
+        /* 【核心修复】强制移除 CSS 边框和轮廓 */
+        border: none !important;
+        outline: none !important;
+        box-shadow: none !important;
         
-        /* 禁止用户长按选中画布 */
+        /* 移除点击高亮 */
         user-select: none;
         -webkit-user-select: none;
-        
-        /* 移除手机点击时的高亮色块 */
         -webkit-tap-highlight-color: transparent;
       }
+      
+      /* 移除获得焦点时的黑框 */
+      canvas:focus {
+        outline: none;
+      }
 
-      /* 确保按钮点击时也没有蓝色高亮 */
       button {
         -webkit-tap-highlight-color: transparent;
         user-select: none;
+        outline: none; /* 按钮也去掉黑框 */
       }
     </style>
   </head>
