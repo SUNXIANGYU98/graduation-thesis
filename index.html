@@ -10,21 +10,40 @@
     <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.4/p5.min.js"></script>
     
     <script src="https://cdnjs.cloudflare.com/ajax/libs/tensorflow/4.17.0/tf.min.js"></script>
+    
     <script src="https://unpkg.com/ml5@1.0.1/dist/ml5.min.js"></script>
 
     <style>
-      body {
+      /* 全局重置 */
+      html, body {
         margin: 0;
         padding: 0;
-        background-color: #EEEEEE;
+        width: 100%;
+        height: 100%;
+        background-color: #EEEEEE; /* 背景色 */
         font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-        /* 防止手机下拉刷新干扰体验 */
+        
+        /* 【关键】防止手机端下拉刷新网页，保证 App 体验 */
         overscroll-behavior: none;
+        overflow: hidden; /* 防止出现滚动条 */
       }
+
+      /* 画布样式优化 */
       canvas {
-        /* 确保画布不被选中 */
+        display: block;
+        
+        /* 禁止用户长按选中画布 */
         user-select: none;
+        -webkit-user-select: none;
+        
+        /* 移除手机点击时的高亮色块 */
         -webkit-tap-highlight-color: transparent;
+      }
+
+      /* 确保按钮点击时也没有蓝色高亮 */
+      button {
+        -webkit-tap-highlight-color: transparent;
+        user-select: none;
       }
     </style>
   </head>
