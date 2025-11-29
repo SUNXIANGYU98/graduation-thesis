@@ -1,12 +1,11 @@
 /*
-  VS Code 本地版 - 最终完美流畅版
+  VS Code Local Version - Final Clean Edition
   修复：
-  1. 纯色背景下“强制刷新视频流”，彻底解决卡死问题
-  2. "AI Ready" 移至 Editor 按钮最下方
-  3. AR 背景控制条固定在画面正下方
+  1. 彻底移除 AR 模式下的所有黑色边框/方框 (noStroke)
+  2. 包含所有功能：背景切换、拍照、设计保存、极简文件名适配
 */
 
-// ================= 路径配置 =================
+// ================= 1. 路径配置 =================
 const pathConfig = {
   ear: "e", // e1.png ...
   mouth: "m", // m1.png ...
@@ -92,8 +91,12 @@ function setup() {
   displaySize = min(windowWidth, windowHeight * 0.8);
   mainCanvas = createCanvas(displaySize, displaySize);
 
-  // 初始化遮罩层
+  // 移除画布本身的 CSS 边框
+  mainCanvas.style("outline", "none");
+  mainCanvas.style("box-shadow", "none");
+
   maskLayer = createGraphics(displaySize, displaySize);
+  maskLayer.noStroke(); // 初始化遮罩层无描边
 
   noLoop();
   imageMode(CENTER);
@@ -111,12 +114,15 @@ function setup() {
   faceMesh = ml5.faceMesh(options, () => {
     console.log("✅ Model Loaded!");
     modelLoaded = true;
-    updateStatusText(); // 更新状态文字
+    updateStatusText();
     redraw();
   });
 }
 
 function draw() {
+  // 【关键修复】全局禁止描边，确保任何地方都不会画出黑线
+  noStroke();
+
   if (mode === "EDITOR") {
     drawEditor();
   } else if (mode === "WEBCAM") {
@@ -149,38 +155,41 @@ function drawStaticPart(imgArray, index) {
   }
 }
 
-// ---------------- 模式 2: AR (防卡死版) ----------------
+// ---------------- 模式 2: AR (无黑线版) ----------------
 function drawWebcam() {
   background(0);
-  noStroke();
+  noStroke(); // 双重保险：确保主画布无描边
 
   let vW = video.width;
   let vH = video.height;
-  if (vW === 0 || vH === 0) return; // 防止未加载时报错
+  if (vW === 0 || vH === 0) return;
 
   let scaleFactor = max(width / vW, height / vH);
   let finalW = vW * scaleFactor;
   let finalH = vH * scaleFactor;
 
-  // 【核心修复】始终绘制视频到底层！
-  // 即使在纯色模式下，我们也要画视频，这样浏览器才不会“冻结”摄像头
-  // 我们稍后会用 pure color 把它盖住
+  // 1. 始终绘制底层视频
   image(video, width / 2, height / 2, finalW, finalH);
 
-  // === 处理遮罩层 (Mask Layer) ===
-  // 如果不是 Original 模式，我们需要盖一层东西
+  // 2. 绘制遮罩层 (Real+Color / Pure Color)
   if (bgIndex > 0) {
     maskLayer.clear();
+    // 【关键修复】每次绘制遮罩前，必须强制关闭 maskLayer 的描边
     maskLayer.noStroke();
 
-    // 1. 设置遮罩层颜色
-    if (bgIndex === 1 || bgIndex === 4) maskLayer.background(255); // White
-    else if (bgIndex === 2 || bgIndex === 5) maskLayer.background(128); // Grey
-    else if (bgIndex === 3 || bgIndex === 6) maskLayer.background(0); // Black
+    // 设置背景色
+    let bgColor;
+    if (bgIndex === 1 || bgIndex === 4) bgColor = color(255); // White
+    else if (bgIndex === 2 || bgIndex === 5) bgColor = color(128); // Grey
+    else if (bgIndex === 3 || bgIndex === 6) bgColor = color(0); // Black
 
-    // 2. 如果是 Real+Color 模式，需要在遮罩上“挖洞”露出人脸
+    // 使用 rect 填充背景
+    maskLayer.fill(bgColor);
+    maskLayer.rect(0, 0, width, height);
+
+    // Real+Color 模式：挖洞
     if (bgIndex >= 1 && bgIndex <= 3 && faces.length > 0) {
-      maskLayer.erase(); // 开始挖洞
+      maskLayer.erase();
       for (let i = 0; i < faces.length; i++) {
         let face = faces[i];
         let kp = face.keypoints;
@@ -196,23 +205,31 @@ function drawWebcam() {
         }
         maskLayer.endShape(CLOSE);
       }
-      maskLayer.noErase(); // 结束挖洞
+      maskLayer.noErase();
     }
 
-    // 3. 将遮罩层画在视频上面
-    // 如果是 Pure 模式，没挖洞，所以是一个实心矩形，完美盖住视频
-    // 如果是 Real 模式，有洞，所以透出了人脸
+    // 将遮罩层盖在视频上
     image(maskLayer, width / 2, height / 2, width, height);
   }
 
-  // === AI 侦测 ===
+  // 3. AI 侦测
   if (faceMesh && faces.length === 0 && frameCount % 30 === 0) {
     faceMesh.detectStart(video, (results) => {
       faces = results;
     });
   }
 
-  // === 绘制面具 ===
+  // AI Loading 提示
+  if (!modelLoaded) {
+    fill(bgIndex === 1 || bgIndex === 4 ? 0 : 255);
+    noStroke();
+    textSize(30);
+    textAlign(CENTER);
+    text("AI Loading...", width / 2, height / 2);
+    return;
+  }
+
+  // 4. 绘制 AR 面具 (顶层)
   for (let i = 0; i < faces.length; i++) {
     drawFaceMask(faces[i], scaleFactor, finalW, finalH);
   }
@@ -242,6 +259,9 @@ function drawFaceMask(face, s, vW, vH) {
   rotate(angle * -1);
   scale(maskScale);
 
+  // 再次确保绘制面具时无描边
+  noStroke();
+
   drawLayer(assets.ear, currentIndices.ear);
   drawLayer(assets.beard, currentIndices.beard);
   imageMode(CENTER);
@@ -250,6 +270,7 @@ function drawFaceMask(face, s, vW, vH) {
   }
   drawLayer(assets.ornaments, currentIndices.ornaments);
 
+  // 动态嘴巴
   let topLip = getP(13);
   let botLip = getP(14);
   let mouthOpenDist = p5.Vector.dist(topLip, botLip);
@@ -266,6 +287,7 @@ function drawFaceMask(face, s, vW, vH) {
     );
   }
 
+  // 动态眼睛
   let leftEyeTop = getP(159);
   let leftEyeBot = getP(145);
   let eyeOpenDist = p5.Vector.dist(leftEyeTop, leftEyeBot);
@@ -297,7 +319,6 @@ let controlPanel, btnStartAR, btnBack, btnSnap, bgControlDiv, bgLabel, statusP;
 function createEditorUI() {
   if (controlPanel) controlPanel.remove();
   controlPanel = createDiv();
-  // 增加底部padding
   controlPanel.style(
     `width:${displaySize}px; margin:20px auto; text-align:center; padding-bottom: 20px;`
   );
@@ -329,7 +350,6 @@ function createEditorUI() {
   listDiv.style("margin-top", "20px");
   for (let part of partsList) createPartRow(part, listDiv);
 
-  // 【UI优化】AI Ready 放在所有按钮的最下方
   statusP = createP("🔴 AI Loading...");
   statusP.parent(controlPanel);
   statusP.style("font-family", "sans-serif");
@@ -342,7 +362,7 @@ function createEditorUI() {
 function updateStatusText() {
   if (statusP) {
     if (modelLoaded) {
-      statusP.html("🟢 AI Ready! You can start now.");
+      statusP.html("🟢 AI Ready! Click 'Start AR Camera'");
       statusP.style("color", "#009900");
     } else {
       statusP.html("🔴 AI Loading... Please Wait...");
@@ -353,7 +373,7 @@ function updateStatusText() {
 
 function startWebcamMode() {
   if (!modelLoaded) {
-    alert("AI Model is still loading... wait.");
+    alert("AI Model is still loading...");
     return;
   }
 
@@ -361,8 +381,8 @@ function startWebcamMode() {
   resizeCanvas(640, 480);
   controlPanel.hide();
 
-  // 重置 maskLayer 尺寸
   maskLayer = createGraphics(640, 480);
+  maskLayer.noStroke(); // 初始化 AR 遮罩层时关闭描边
 
   faceMesh.detectStart(video, (results) => {
     faces = results;
@@ -381,12 +401,11 @@ function startWebcamMode() {
       saveCanvas("ar_shot", "png");
     });
 
-    // 【UI优化】背景控制条固定在底部中央
     bgControlDiv = createDiv();
     bgControlDiv.style("position", "fixed");
-    bgControlDiv.style("bottom", "30px"); // 距离底部
-    bgControlDiv.style("left", "50%"); // 屏幕水平居中
-    bgControlDiv.style("transform", "translateX(-50%)"); // 修正居中
+    bgControlDiv.style("bottom", "30px");
+    bgControlDiv.style("left", "50%");
+    bgControlDiv.style("transform", "translateX(-50%)");
 
     bgControlDiv.style("background", "white");
     bgControlDiv.style("padding", "10px 20px");
@@ -426,6 +445,7 @@ function stopWebcamMode() {
   mode = "EDITOR";
   resizeCanvas(displaySize, displaySize);
   maskLayer = createGraphics(displaySize, displaySize);
+  maskLayer.noStroke();
 
   faceMesh.detectStop();
   faces = [];
