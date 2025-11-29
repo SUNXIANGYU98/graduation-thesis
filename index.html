@@ -2,11 +2,14 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Face AR Project</title>
+    
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    
+    <title>Face AR Magic</title>
 
     <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.4/p5.min.js"></script>
     
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tensorflow/4.17.0/tf.min.js"></script>
     <script src="https://unpkg.com/ml5@1.0.1/dist/ml5.min.js"></script>
 
     <style>
@@ -14,14 +17,14 @@
         margin: 0;
         padding: 0;
         background-color: #EEEEEE;
-        font-family: sans-serif;
-        display: flex;
-        justify-content: center; /* 让画布居中 */
-        align-items: center;
-        min-height: 100vh;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+        /* 防止手机下拉刷新干扰体验 */
+        overscroll-behavior: none;
       }
       canvas {
-        box-shadow: 0 0 20px rgba(0,0,0,0.2);
+        /* 确保画布不被选中 */
+        user-select: none;
+        -webkit-tap-highlight-color: transparent;
       }
     </style>
   </head>

@@ -1,19 +1,19 @@
 /*
-  VS Code Local Version - Universal Fix (Distortion Free)
+  VS Code Local Version - Distortion Fix Edition
   修复：
-  1. PC端：移除强制 User 镜头限制，解决黑屏问题
-  2. 手机端：使用“Cover剪裁”算法，彻底解决人脸被压扁变形的问题
-  3. 坐标对齐：重新映射 AI 坐标，确保面具紧贴人脸
+  1. PC端：移除强制分辨率限制，解决黑屏
+  2. 手机端：使用“等比缩放+居中剪裁”算法，人脸不再变形
+  3. 坐标对齐：修复 AI 坐标映射，确保面具紧贴人脸
 */
 
 // ================= 1. 路径配置 =================
 const pathConfig = {
-  ear: "e",
-  mouth: "m",
-  nose: "n",
-  eyes: "y",
-  beard: "b",
-  ornaments: "o",
+  ear: "e", // e1.png ...
+  mouth: "m", // m1.png ...
+  nose: "n", // n1.png ...
+  eyes: "y", // y1.png ...
+  beard: "b", // b1.png ...
+  ornaments: "o", // o1.png ...
 };
 
 const IMAGE_COUNT = 6;
@@ -53,7 +53,7 @@ let mainCanvas;
 let maskLayer;
 let displaySize = 800;
 const DESIGN_SIZE = 1000;
-let isMobile = false; // 设备检测标志
+let isMobile = false;
 
 // === 背景控制 ===
 let bgIndex = 0;
@@ -89,26 +89,22 @@ function loadGroup(prefix, targetArray) {
 }
 
 function setup() {
-  // 检测是否为移动端
   isMobile =
     /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
       navigator.userAgent
     );
 
-  // 初始化画布尺寸
+  // 画布尺寸初始化
   if (isMobile) {
-    displaySize = windowWidth; // 手机全宽
+    displaySize = windowWidth;
   } else {
-    displaySize = min(windowWidth * 0.9, windowHeight * 0.8); // 电脑保持正方形
+    displaySize = min(windowWidth * 0.95, windowHeight * 0.8);
   }
 
   mainCanvas = createCanvas(displaySize, displaySize);
-
-  // 样式优化
   mainCanvas.style("display", "block");
   mainCanvas.style("margin", "0 auto");
   mainCanvas.style("outline", "none");
-  mainCanvas.style("box-shadow", "none");
 
   maskLayer = createGraphics(displaySize, displaySize);
   maskLayer.noStroke();
@@ -119,28 +115,25 @@ function setup() {
 
   createEditorUI();
 
-  // 【修复 1】摄像头兼容性设置
+  // 【修复 1】摄像头初始化逻辑重写
+  // 不再强制设置 video.size，让浏览器决定最佳分辨率
   let constraints;
   if (isMobile) {
-    // 手机：强制前置，且优先竖屏分辨率
     constraints = {
       video: {
         facingMode: "user",
-        // 尝试请求竖屏比例，减少裁切
-        width: { ideal: 480 },
-        height: { ideal: 640 },
       },
       audio: false,
     };
   } else {
-    // PC：不加限制，让浏览器自己找能用的摄像头
+    // PC 端使用最基础配置，兼容性最好
     constraints = VIDEO;
   }
 
+  // 使用回调函数确认摄像头启动
   video = createCapture(constraints, function (stream) {
-    console.log("Camera started successfully");
+    console.log("Camera stream started.");
   });
-
   video.hide();
 
   console.log("Starting FaceMesh...");
@@ -189,26 +182,39 @@ function drawStaticPart(imgArray, index) {
   }
 }
 
-// ---------------- 模式 2: AR (防变形核心修复) ----------------
+// ---------------- 模式 2: AR (防畸变修复版) ----------------
 function drawWebcam() {
   background(0);
   noStroke();
 
-  // 等待视频加载
-  if (video.width === 0 || video.height === 0) return;
+  // 等待视频流准备好
+  if (!video || video.width === 0 || video.height === 0) {
+    return;
+  }
 
-  // 【修复 2】核心：Object-Fit: Cover 算法
-  // 计算视频和画布的比例，找出“填满画布”所需的缩放值
-  // 这样会裁切掉多余边缘，但绝不会拉伸变形！
-  let scaleW = width / video.width;
-  let scaleH = height / video.height;
-  let scaleFactor = max(scaleW, scaleH); // 取最大值，确保填满
+  // 【修复 2】防畸变核心算法 (Aspect Ratio Cover)
+  // 计算画布比例和视频比例
+  let canvasRatio = width / height;
+  let videoRatio = video.width / video.height;
 
-  let finalW = video.width * scaleFactor;
-  let finalH = video.height * scaleFactor;
+  let drawW, drawH;
 
-  // 1. 绘制底层视频 (居中绘制)
-  image(video, width / 2, height / 2, finalW, finalH);
+  // 如果画布比视频更宽 (屏幕宽，视频窄) -> 以宽度为准，上下剪裁
+  // 如果画布比视频更瘦 (手机竖屏) -> 以高度为准，左右剪裁
+  if (canvasRatio > videoRatio) {
+    drawW = width;
+    drawH = width / videoRatio;
+  } else {
+    drawH = height;
+    drawW = height * videoRatio;
+  }
+
+  // 这里的 scaleRatio 是指视频被放大/缩小的倍数
+  // 我们需要用这个倍数去修正 AI 的坐标
+  let scaleRatio = drawW / video.width;
+
+  // 1. 绘制底层视频 (居中绘制，多余部分会自动被画布裁掉)
+  image(video, width / 2, height / 2, drawW, drawH);
 
   // 2. 绘制遮罩
   if (bgIndex > 0) {
@@ -228,16 +234,16 @@ function drawWebcam() {
       for (let i = 0; i < faces.length; i++) {
         let face = faces[i];
         let kp = face.keypoints;
-        // 计算偏移量：(画布宽 - 视频实际宽) / 2
-        let ox = (width - finalW) / 2;
-        let oy = (height - finalH) / 2;
+        // 计算偏移量：(画布宽 - 实际绘制宽) / 2
+        let ox = (width - drawW) / 2;
+        let oy = (height - drawH) / 2;
 
         maskLayer.beginShape();
         for (let idx of silhouetteIndices) {
           let p = kp[idx];
-          // 坐标映射必须和视频的缩放偏移完全一致
-          let x = p.x * scaleFactor + ox;
-          let y = p.y * scaleFactor + oy;
+          // 【关键】坐标必须跟随缩放逻辑
+          let x = p.x * scaleRatio + ox;
+          let y = p.y * scaleRatio + oy;
           maskLayer.vertex(x, y);
         }
         maskLayer.endShape(CLOSE);
@@ -254,7 +260,6 @@ function drawWebcam() {
     });
   }
 
-  // Loading 提示
   if (!modelLoaded) {
     fill(bgIndex === 1 || bgIndex === 4 ? 0 : 255);
     noStroke();
@@ -265,16 +270,20 @@ function drawWebcam() {
   }
 
   // 4. 绘制 AR 面具
+  // 把计算好的缩放参数传进去
   for (let i = 0; i < faces.length; i++) {
-    drawFaceMask(faces[i], scaleFactor, finalW, finalH);
+    drawFaceMask(faces[i], scaleRatio, drawW, drawH);
   }
 }
 
 // AR 算法
-function drawFaceMask(face, s, vW, vH) {
+function drawFaceMask(face, s, drawW, drawH) {
   let kp = face.keypoints;
-  let ox = (width - vW) / 2;
-  let oy = (height - vH) / 2;
+
+  // 重新计算偏移量
+  let ox = (width - drawW) / 2;
+  let oy = (height - drawH) / 2;
+
   function getP(index) {
     return createVector(kp[index].x * s + ox, kp[index].y * s + oy);
   }
@@ -291,10 +300,7 @@ function drawFaceMask(face, s, vW, vH) {
 
   push();
   translate(noseTip.x, noseTip.y);
-  // 【修复 3】旋转逻辑修正
-  // 电脑端通常不需要反转旋转，手机端前置可能需要
-  // 但为了统一，我们这里不做特殊反转，让镜像逻辑自然处理
-  // 如果发现左右反了，请把下面的 -1 去掉或加上
+  // 镜像翻转逻辑：前置摄像头通常需要翻转旋转方向
   rotate(angle * -1);
   scale(maskScale);
 
@@ -421,14 +427,12 @@ function startWebcamMode() {
 
   mode = "WEBCAM";
 
-  // AR 模式全屏适配
-  let w, h;
-  if (isMobile) {
-    w = windowWidth;
-    h = windowHeight; // 手机全屏
-  } else {
+  // AR 模式全屏适配逻辑
+  let w = windowWidth;
+  let h = windowHeight;
+  if (!isMobile) {
     w = min(windowWidth, 800);
-    h = min(windowHeight * 0.8, 600); // 电脑限制尺寸
+    h = min(windowHeight * 0.8, 600);
   }
 
   resizeCanvas(w, h);
@@ -509,7 +513,6 @@ function startWebcamMode() {
 function stopWebcamMode() {
   mode = "EDITOR";
 
-  // 恢复编辑器尺寸
   let size = min(windowWidth * 0.95, windowHeight * 0.75);
   resizeCanvas(size, size);
   mainCanvas.style("margin", "0 auto");
@@ -577,11 +580,9 @@ function styleArrowBtn(btn) {
 }
 
 function windowResized() {
-  // 手机旋转屏幕时刷新页面
   if (isMobile) {
     location.reload();
   } else {
-    // 电脑端仅重绘
     if (mode === "EDITOR") {
       let size = min(windowWidth * 0.95, windowHeight * 0.75);
       resizeCanvas(size, size);
