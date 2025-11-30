@@ -1,8 +1,8 @@
 /*
-  VS Code Local Version - Final UI Polish
+  VS Code Local Version - Signature Moved Edition
   修复：
-  1. LOGO 移至底部，尺寸缩小
-  2. 加大图片边缘裁切力度 (20px)，彻底消除素材自带的黑线框
+  1. "SUN XIANGYU" 署名从左上角移到了右侧工具栏 LOGO 的下方
+  2. 保持了所有之前的去黑线、防卡死、UI优化功能
 */
 
 // ================= 1. 路径配置 =================
@@ -18,8 +18,6 @@ const pathConfig = {
 const IMAGE_COUNT = 6;
 // ===========================================
 
-// 【关键修改】加大裁切力度！
-// 之前的 8 像素可能没切干净，现在直接切掉 20 像素，确保边缘的框被去掉
 const CROP_PIXELS = 25;
 
 let assets = {
@@ -93,8 +91,7 @@ function loadGroup(prefix, targetArray) {
 }
 
 function setup() {
-  //【新增功能】添加左上角固定署名标记
-  createWatermark();
+  // 注意：删除了这里的 createWatermark() 调用
 
   isMobile =
     /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
@@ -157,19 +154,7 @@ function setup() {
   });
 }
 
-function createWatermark() {
-  let watermark = createP("SUN XIANGYU");
-  watermark.style("position", "fixed");
-  watermark.style("top", "15px");
-  watermark.style("left", "25px");
-  watermark.style("margin", "0");
-  watermark.style("font-family", "Helvetica, Arial, sans-serif");
-  watermark.style("font-weight", "800");
-  watermark.style("font-size", "20px");
-  watermark.style("color", "#333");
-  watermark.style("z-index", "2000");
-  watermark.style("pointer-events", "none");
-}
+// 注意：删除了 createWatermark 函数定义
 
 function draw() {
   noStroke();
@@ -203,7 +188,6 @@ function drawEditor() {
 
 function drawStaticPart(imgArray, index) {
   if (imgArray.length > 0 && imgArray[index]) {
-    // 编辑器模式也应用裁切
     let img = imgArray[index];
     image(
       img,
@@ -300,14 +284,12 @@ function drawWebcam() {
 
   pop();
 
-  // AI 侦测
   if (faceMesh && faces.length === 0 && frameCount % 30 === 0) {
     faceMesh.detectStart(video, (results) => {
       faces = results;
     });
   }
 
-  // Loading
   if (!modelLoaded) {
     fill(bgIndex === 1 || bgIndex === 4 ? 0 : 255);
     noStroke();
@@ -410,7 +392,6 @@ function drawPart(imgArray, index) {
   if (imgArray.length > 0 && imgArray[index]) {
     let img = imgArray[index];
     noStroke();
-    // 这里的参数确保了四周都被切掉 CROP_PIXELS 像素
     image(
       img,
       0,
@@ -451,7 +432,6 @@ function createEditorUI() {
     controlPanel.style("justify-content", "flex-start");
   }
 
-  // 1. 按钮组
   let btnContainer = createDiv();
   btnContainer.parent(controlPanel);
   btnContainer.style("display", "flex");
@@ -480,14 +460,16 @@ function createEditorUI() {
     saveCanvas("my_face_design", "png");
   });
 
-  // 2. 部位切换列表
   let listDiv = createDiv();
   listDiv.parent(controlPanel);
   listDiv.style("width", "100%");
 
   for (let part of partsList) createPartRow(part, listDiv);
 
-  // 3. AI 状态文字
+  let spacer = createDiv();
+  spacer.parent(controlPanel);
+  spacer.style("flex-grow", "1");
+
   statusP = createP("🔴 AI Loading...");
   statusP.parent(controlPanel);
   statusP.style("font-family", "sans-serif");
@@ -498,14 +480,25 @@ function createEditorUI() {
   statusP.style("width", "100%");
   statusP.style("margin", "20px 0");
 
-  // 4. 【新增】LOGO 移到底部
+  // 【修改处】LOGO 移到底部
   let logoImg = createImg("LOGO.png", "Brand Logo");
   logoImg.parent(controlPanel);
-  logoImg.style("width", "100px"); // 缩小 LOGO
+  logoImg.style("width", "100px");
   logoImg.style("height", "auto");
   logoImg.style("display", "block");
-  logoImg.style("margin", "0 auto"); // 居中
-  logoImg.style("opacity", "0.8"); // 稍微淡一点，显高级
+  logoImg.style("margin", "0 auto 10px auto");
+  logoImg.style("opacity", "0.8");
+
+  // 【新增功能】署名 SUN XIANGYU
+  // 放在 LOGO 下面
+  let signature = createP("SUN XIANGYU");
+  signature.parent(controlPanel);
+  signature.style("font-family", "sans-serif");
+  signature.style("font-size", "14px");
+  signature.style("font-weight", "bold");
+  signature.style("color", "#888"); // 灰色
+  signature.style("text-align", "center");
+  signature.style("margin", "0"); // 紧贴着 LOGO
 }
 
 function updateStatusText() {
@@ -540,7 +533,7 @@ function startWebcamMode() {
   if (!btnBack) {
     let arBtnContainer = createDiv();
     arBtnContainer.id("ar-btns");
-    // AR 按钮插入到控制面板最顶端
+    // 插入到最前面
     controlPanel.elt.insertBefore(
       arBtnContainer.elt,
       controlPanel.elt.firstChild
@@ -566,18 +559,17 @@ function startWebcamMode() {
 
     bgControlDiv = createDiv();
     bgControlDiv.id("bg-ctrl");
-    bgControlDiv.parent(controlPanel);
+    bgControlDiv.parent(controlPanel); // 放在控制面板里
     bgControlDiv.style("background", "#f0f0f0");
     bgControlDiv.style("padding", "15px");
     bgControlDiv.style("border-radius", "12px");
     bgControlDiv.style("display", "flex");
     bgControlDiv.style("align-items", "center");
     bgControlDiv.style("justify-content", "space-between");
-    bgControlDiv.style("margin-bottom", "20px");
+    bgControlDiv.style("margin-bottom", "20px"); // 和 AI 状态保持距离
 
-    // 背景控制条插入到 LOGO 之前
-    let logo = select("img", controlPanel);
-    controlPanel.elt.insertBefore(bgControlDiv.elt, logo.elt);
+    // 插入到状态文字之前
+    controlPanel.elt.insertBefore(bgControlDiv.elt, statusP.elt);
 
     let btnBgPrev = createButton("◀");
     styleArrowBtn(btnBgPrev);
