@@ -1,11 +1,11 @@
 /*
-  VS Code Local Version - Signature Moved Edition
-  修复：
-  1. "SUN XIANGYU" 署名从左上角移到了右侧工具栏 LOGO 的下方
-  2. 保持了所有之前的去黑线、防卡死、UI优化功能
+  VS Code Local Version - Final Complete Edition
+  CN: 
+  1. AR 模式顶部工具栏：[返回] [切换模式] [拍照]
+  2. 保持了“同步模式显示列表”、“随机模式隐藏列表”的智能交互
 */
 
-// ================= 1. 路径配置 =================
+// ================= 1. 路径配置 / Configurazione Percorso =================
 const pathConfig = {
   ear: "e",
   mouth: "m",
@@ -16,7 +16,7 @@ const pathConfig = {
 };
 
 const IMAGE_COUNT = 6;
-// ===========================================
+// ========================================================================
 
 const CROP_PIXELS = 25;
 
@@ -28,6 +28,7 @@ let assets = {
   beard: [],
   ornaments: [],
 };
+// CN: 全局当前配置 (用于编辑器和同步模式)
 let currentIndices = {
   ear: 0,
   mouth: 0,
@@ -36,6 +37,7 @@ let currentIndices = {
   beard: 0,
   ornaments: 0,
 };
+
 let partsList = [
   { key: "ear", label: "Ear" },
   { key: "mouth", label: "Mouth" },
@@ -45,7 +47,10 @@ let partsList = [
   { key: "ornaments", label: "Ornaments" },
 ];
 
-let mode = "EDITOR";
+// CN: 状态管理
+let mode = "EDITOR"; // 'EDITOR' or 'WEBCAM'
+let arMode = "SYNC"; // 'SYNC' | 'MULTI'
+
 let video;
 let faceMesh;
 let faces = [];
@@ -57,7 +62,10 @@ const DESIGN_SIZE = 1000;
 let isMobile = false;
 let mainContainer;
 
-// === 背景控制 ===
+// CN: 多人随机配置缓存
+let faceConfigMap = {};
+
+// === 背景控制 / Controllo Sfondo ===
 let bgIndex = 0;
 const bgOptions = [
   "Original",
@@ -91,8 +99,6 @@ function loadGroup(prefix, targetArray) {
 }
 
 function setup() {
-  // 注意：删除了这里的 createWatermark() 调用
-
   isMobile =
     /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(
       navigator.userAgent
@@ -144,7 +150,13 @@ function setup() {
   video.hide();
 
   console.log("Starting FaceMesh...");
-  let options = { maxFaces: 5, refineLandmarks: true, flipHorizontal: false };
+  // CN: 开启追踪ID以支持多人独立面具
+  let options = {
+    maxFaces: 10,
+    refineLandmarks: true,
+    flipHorizontal: false,
+    enableTracking: true,
+  };
 
   faceMesh = ml5.faceMesh(options, () => {
     console.log("✅ Model Loaded!");
@@ -154,11 +166,12 @@ function setup() {
   });
 }
 
-// 注意：删除了 createWatermark 函数定义
-
 function draw() {
+  // CN: 全局清理状态
+  drawingContext.shadowBlur = 0;
   noStroke();
   strokeWeight(0);
+
   if (mode === "EDITOR") {
     drawEditor();
   } else if (mode === "WEBCAM") {
@@ -177,6 +190,7 @@ function drawEditor() {
   let s = width / DESIGN_SIZE;
   scale(s);
 
+  // CN: 编辑器始终使用 currentIndices
   drawStaticPart(assets.ear, currentIndices.ear);
   drawStaticPart(assets.mouth, currentIndices.mouth);
   drawStaticPart(assets.nose, currentIndices.nose);
@@ -222,13 +236,15 @@ function drawWebcam() {
   scale(-1, 1);
   noStroke();
 
-  // 1. 绘制视频
-  if (bgIndex <= 3) {
+  // 1. Video Layer (Force draw to keep stream alive)
+  if (bgIndex >= 4) {
+    image(video, 0, 0, 1, 1); // Hidden keep-alive
+  } else {
     drawingContext.shadowBlur = 0;
     image(video, 0, 0, finalW, finalH);
   }
 
-  // 2. 绘制遮罩
+  // 2. Mask Layer (Real+Color)
   if (bgIndex > 0) {
     maskLayer.clear();
     maskLayer.noStroke();
@@ -266,7 +282,7 @@ function drawWebcam() {
     image(maskLayer, 0, 0, width, height);
   }
 
-  // 3. 纯色覆盖
+  // 3. Pure Color Overlay
   if (bgIndex >= 4) {
     let c;
     if (bgIndex === 4) c = color(255);
@@ -274,12 +290,34 @@ function drawWebcam() {
     else c = color(0);
     fill(c);
     noStroke();
-    rect(0, 0, width * 2, height * 2);
+    rectMode(CENTER);
+    rect(0, 0, width, height);
   }
 
-  // 4. 绘制面具
+  // 4. Draw Faces (Different Logic based on Mode)
   for (let i = 0; i < faces.length; i++) {
-    drawFaceMask(faces[i], scaleFactor, video.width, video.height);
+    let indicesToUse;
+    let face = faces[i];
+
+    if (arMode === "SYNC") {
+      // 模式 A：同步，所有人用一样的 (currentIndices)
+      indicesToUse = currentIndices;
+    } else {
+      // 模式 B：多人随机，每个人用独有的 (faceConfigMap)
+      let id = face.trackId || face.id || i;
+      if (!faceConfigMap[id]) {
+        faceConfigMap[id] = generateRandomIndices();
+      }
+      indicesToUse = faceConfigMap[id];
+    }
+
+    drawFaceMask(
+      faces[i],
+      scaleFactor,
+      video.width,
+      video.height,
+      indicesToUse
+    );
   }
 
   pop();
@@ -299,8 +337,20 @@ function drawWebcam() {
   }
 }
 
-// AR 算法
-function drawFaceMask(face, s, vW, vH) {
+// 辅助：生成随机配置
+function generateRandomIndices() {
+  return {
+    ear: floor(random(assets.ear.length)),
+    mouth: floor(random(assets.mouth.length)),
+    nose: floor(random(assets.nose.length)),
+    eyes: floor(random(assets.eyes.length)),
+    beard: floor(random(assets.beard.length)),
+    ornaments: floor(random(assets.ornaments.length)),
+  };
+}
+
+// AR 算法 (带 indices 参数)
+function drawFaceMask(face, s, vW, vH, indices) {
   let kp = face.keypoints;
   let ox = -vW / 2;
   let oy = -vH / 2;
@@ -326,11 +376,12 @@ function drawFaceMask(face, s, vW, vH) {
   rotate(angle);
   scale(maskScale);
 
-  drawPart(assets.ear, currentIndices.ear);
-  drawPart(assets.beard, currentIndices.beard);
+  // 使用传入的 indices 绘制
+  drawPart(assets.ear, indices.ear);
+  drawPart(assets.beard, indices.beard);
 
-  if (assets.nose[currentIndices.nose]) {
-    let img = assets.nose[currentIndices.nose];
+  if (assets.nose[indices.nose]) {
+    let img = assets.nose[indices.nose];
     image(
       img,
       0,
@@ -344,15 +395,15 @@ function drawFaceMask(face, s, vW, vH) {
     );
   }
 
-  drawPart(assets.ornaments, currentIndices.ornaments);
+  drawPart(assets.ornaments, indices.ornaments);
 
   let topLip = getP(13);
   let botLip = getP(14);
   let mouthOpenDist = p5.Vector.dist(topLip, botLip);
   let relativeOpen = mouthOpenDist / maskScale;
   let mouthStretch = map(relativeOpen, 0, 100, 0.8, 2.5, true);
-  if (assets.mouth[currentIndices.mouth]) {
-    let img = assets.mouth[currentIndices.mouth];
+  if (assets.mouth[indices.mouth]) {
+    let img = assets.mouth[indices.mouth];
     image(
       img,
       0,
@@ -371,8 +422,8 @@ function drawFaceMask(face, s, vW, vH) {
   let eyeOpenDist = p5.Vector.dist(leftEyeTop, leftEyeBot);
   let relativeEyeOpen = eyeOpenDist / maskScale;
   let eyeSquash = map(relativeEyeOpen, 0, 20, 0.1, 1.0, true);
-  if (assets.eyes[currentIndices.eyes]) {
-    let img = assets.eyes[currentIndices.eyes];
+  if (assets.eyes[indices.eyes]) {
+    let img = assets.eyes[indices.eyes];
     image(
       img,
       0,
@@ -407,7 +458,14 @@ function drawPart(imgArray, index) {
 }
 
 // ---------------- UI & DOM ----------------
-let controlPanel, btnStartAR, btnBack, btnSnap, bgControlDiv, bgLabel, statusP;
+let controlPanel,
+  btnStartAR,
+  btnBack,
+  btnSnap,
+  btnSwitchMode,
+  bgControlDiv,
+  bgLabel,
+  statusP;
 
 function createEditorUI() {
   if (controlPanel) controlPanel.remove();
@@ -433,13 +491,14 @@ function createEditorUI() {
   }
 
   let btnContainer = createDiv();
+  btnContainer.id("editor-btn-group");
   btnContainer.parent(controlPanel);
   btnContainer.style("display", "flex");
   btnContainer.style("gap", "10px");
   btnContainer.style("margin-bottom", "30px");
   btnContainer.style("flex-wrap", "wrap");
 
-  btnStartAR = createButton("📸 AR Camera");
+  btnStartAR = createButton("📸 Start Camera");
   styleMainButton(btnStartAR, "#2196F3");
   btnStartAR.style("flex-grow", "1");
   btnStartAR.parent(btnContainer);
@@ -449,8 +508,14 @@ function createEditorUI() {
   styleMainButton(btnRand, "#FF9800");
   btnRand.parent(btnContainer);
   btnRand.mousePressed(() => {
-    randomizeFace();
-    redraw();
+    if (mode === "EDITOR") {
+      currentIndices = generateRandomIndices();
+      redraw();
+    } else if (mode === "WEBCAM" && arMode === "MULTI") {
+      faceConfigMap = {}; // 清空多人配置，重新随机
+    } else if (mode === "WEBCAM" && arMode === "SYNC") {
+      currentIndices = generateRandomIndices();
+    }
   });
 
   let btnSave = createButton("💾 Save");
@@ -460,7 +525,9 @@ function createEditorUI() {
     saveCanvas("my_face_design", "png");
   });
 
+  // 部位列表容器
   let listDiv = createDiv();
+  listDiv.id("part-list-container");
   listDiv.parent(controlPanel);
   listDiv.style("width", "100%");
 
@@ -480,7 +547,6 @@ function createEditorUI() {
   statusP.style("width", "100%");
   statusP.style("margin", "20px 0");
 
-  // 【修改处】LOGO 移到底部
   let logoImg = createImg("LOGO.png", "Brand Logo");
   logoImg.parent(controlPanel);
   logoImg.style("width", "100px");
@@ -489,16 +555,14 @@ function createEditorUI() {
   logoImg.style("margin", "0 auto 10px auto");
   logoImg.style("opacity", "0.8");
 
-  // 【新增功能】署名 SUN XIANGYU
-  // 放在 LOGO 下面
   let signature = createP("SUN XIANGYU");
   signature.parent(controlPanel);
   signature.style("font-family", "sans-serif");
   signature.style("font-size", "14px");
   signature.style("font-weight", "bold");
-  signature.style("color", "#888"); // 灰色
+  signature.style("color", "#888");
   signature.style("text-align", "center");
-  signature.style("margin", "0"); // 紧贴着 LOGO
+  signature.style("margin", "0");
 }
 
 function updateStatusText() {
@@ -520,6 +584,7 @@ function startWebcamMode() {
   }
 
   mode = "WEBCAM";
+  arMode = "SYNC"; // 默认进入同步模式
 
   maskLayer.clear();
   maskLayer.noStroke();
@@ -528,12 +593,14 @@ function startWebcamMode() {
     faces = results;
   });
 
-  btnStartAR.hide();
+  // 隐藏 Editor 专用按钮
+  let btns = selectAll("button", "#editor-btn-group");
+  btns[0].hide(); // Start
+  btns[2].hide(); // Save
 
   if (!btnBack) {
     let arBtnContainer = createDiv();
     arBtnContainer.id("ar-btns");
-    // 插入到最前面
     controlPanel.elt.insertBefore(
       arBtnContainer.elt,
       controlPanel.elt.firstChild
@@ -542,6 +609,7 @@ function startWebcamMode() {
     arBtnContainer.style("display", "flex");
     arBtnContainer.style("gap", "10px");
     arBtnContainer.style("margin-bottom", "20px");
+    arBtnContainer.style("flex-wrap", "wrap");
 
     btnBack = createButton("⬅ Back");
     styleMainButton(btnBack, "#f44336");
@@ -549,26 +617,33 @@ function startWebcamMode() {
     btnBack.style("flex-grow", "1");
     btnBack.mousePressed(stopWebcamMode);
 
+    // 【修改】Switch Mode 按钮
+    btnSwitchMode = createButton("🔄 Mode: SYNC");
+    styleMainButton(btnSwitchMode, "#9C27B0"); // 紫色
+    btnSwitchMode.parent(arBtnContainer);
+    btnSwitchMode.style("flex-grow", "2");
+    btnSwitchMode.mousePressed(toggleArMode);
+
+    // 【修改】重新添加 Snap 按钮
     btnSnap = createButton("📸 Snap");
     styleMainButton(btnSnap, "#E91E63");
     btnSnap.parent(arBtnContainer);
     btnSnap.style("flex-grow", "1");
     btnSnap.mousePressed(() => {
-      saveCanvas("ar_shot", "png");
+      saveCanvas("ar_snapshot", "png");
     });
 
     bgControlDiv = createDiv();
     bgControlDiv.id("bg-ctrl");
-    bgControlDiv.parent(controlPanel); // 放在控制面板里
+    bgControlDiv.parent(controlPanel);
     bgControlDiv.style("background", "#f0f0f0");
     bgControlDiv.style("padding", "15px");
     bgControlDiv.style("border-radius", "12px");
     bgControlDiv.style("display", "flex");
     bgControlDiv.style("align-items", "center");
     bgControlDiv.style("justify-content", "space-between");
-    bgControlDiv.style("margin-bottom", "20px"); // 和 AI 状态保持距离
+    bgControlDiv.style("margin-bottom", "20px");
 
-    // 插入到状态文字之前
     controlPanel.elt.insertBefore(bgControlDiv.elt, statusP.elt);
 
     let btnBgPrev = createButton("◀");
@@ -589,8 +664,27 @@ function startWebcamMode() {
   } else {
     select("#ar-btns").style("display", "flex");
     select("#bg-ctrl").style("display", "flex");
+    arMode = "SYNC";
+    btnSwitchMode.html("🔄 Mode: SYNC");
+    btnSwitchMode.style("background", "#9C27B0");
+    select("#part-list-container").show();
   }
   loop();
+}
+
+function toggleArMode() {
+  if (arMode === "SYNC") {
+    arMode = "MULTI";
+    btnSwitchMode.html("🔀 Mode: MULTI");
+    btnSwitchMode.style("background", "#FF9800"); // 橙色
+    select("#part-list-container").hide(); // 隐藏列表
+    faceConfigMap = {};
+  } else {
+    arMode = "SYNC";
+    btnSwitchMode.html("🔄 Mode: SYNC");
+    btnSwitchMode.style("background", "#9C27B0"); // 紫色
+    select("#part-list-container").show(); // 显示列表
+  }
 }
 
 function stopWebcamMode() {
@@ -599,7 +693,12 @@ function stopWebcamMode() {
   faces = [];
   noLoop();
 
-  btnStartAR.show();
+  let btns = selectAll("button", "#editor-btn-group");
+  btns[0].show(); // Start
+  btns[2].show(); // Save
+
+  select("#part-list-container").show();
+
   if (select("#ar-btns")) select("#ar-btns").hide();
   if (select("#bg-ctrl")) select("#bg-ctrl").hide();
 
